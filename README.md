@@ -1,4 +1,4 @@
-# Anti-Cheat Artifacts Detector
+# Kiroshi: an Anti-Cheat Artifacts Detector
 
 An **IDA Pro plugin** that statically detects **Anti-Cheat Artifacts** in Windows binaries.  
 meant to help reverse engineers and security researchers quickly identify the presence of
