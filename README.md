@@ -4,7 +4,7 @@ An **IDA Pro plugin** that statically detects **Anti-Cheat Artifacts** in Window
 meant to help reverse engineers and security researchers quickly identify the presence of
 commercial or custom anti-cheat mechanisms during analysis.
 
-> ⚠️ This plugin is for **reverse engineering, malware analysis, and academic research only**.
+> ⚠️ This plugin is for **reverse engineering and academic research only**.
 
 ---
 
