@@ -52,6 +52,45 @@ const anticheat_detector_t::api_pattern_t anticheat_detector_t::api_patterns[] =
   { "LoadLibraryA", AC_MODULE_ENUM, "Load library check", 2 },
   { "LoadLibraryW", AC_MODULE_ENUM, "Load library check", 2 },
   
+  // Exception handler manipulation
+  { "SetUnhandledExceptionFilter", AC_INTEGRITY_CHECK, "Sets custom exception handler for monitoring", 4 },
+  { "AddVectoredExceptionHandler", AC_INTEGRITY_CHECK, "Adds vectored exception handler", 4 },
+  
+  // Hook detection via IAT/EAT inspection
+  { "GetProcAddress", AC_INTEGRITY_CHECK, "Resolves function addresses for hook checks", 4 },
+  { "ImageNtHeader", AC_INTEGRITY_CHECK, "Accesses PE headers for IAT/EAT analysis", 4 },
+  
+  // Anti-cheat service interaction
+  { "DeviceIoControl", AC_PROTECTION_CHECK, "Sends IOCTLs to anti-cheat drivers", 5 },
+  { "CreateFileA", AC_PROTECTION_CHECK, "Opens handles to anti-cheat devices", 4 },
+  { "CreateFileW", AC_PROTECTION_CHECK, "Opens handles to anti-cheat devices", 4 },
+  
+  // Network packet inspection
+  { "WSAStartup", AC_INTEGRITY_CHECK, "Initializes Winsock for network monitoring", 3 },
+  { "recv", AC_INTEGRITY_CHECK, "Receives network data for inspection", 3 },
+  { "send", AC_INTEGRITY_CHECK, "Sends network data for inspection", 3 },
+  { "WSARecv", AC_INTEGRITY_CHECK, "Advanced network receive for inspection", 3 },
+  { "WSASend", AC_INTEGRITY_CHECK, "Advanced network send for inspection", 3 },
+  
+  // File system integrity checks
+  { "FindFirstFileA", AC_INTEGRITY_CHECK, "Enumerates files for integrity checks", 3 },
+  { "FindFirstFileW", AC_INTEGRITY_CHECK, "Enumerates files for integrity checks", 3 },
+  { "FindNextFileA", AC_INTEGRITY_CHECK, "Continues file enumeration", 3 },
+  { "FindNextFileW", AC_INTEGRITY_CHECK, "Continues file enumeration", 3 },
+  { "CreateFileMappingA", AC_INTEGRITY_CHECK, "Maps files for hashing/verification", 3 },
+  { "CreateFileMappingW", AC_INTEGRITY_CHECK, "Maps files for hashing/verification", 3 },
+  
+  // Registry key monitoring
+  { "RegOpenKeyExA", AC_INTEGRITY_CHECK, "Opens registry keys for monitoring", 3 },
+  { "RegOpenKeyExW", AC_INTEGRITY_CHECK, "Opens registry keys for monitoring", 3 },
+  { "RegQueryValueExA", AC_INTEGRITY_CHECK, "Queries registry values for anomalies", 3 },
+  { "RegQueryValueExW", AC_INTEGRITY_CHECK, "Queries registry values for anomalies", 3 },
+  
+  // Additional memory operations
+  { "VirtualAlloc", AC_INTEGRITY_CHECK, "Allocates memory, potentially making it executable", 3 },
+  { "VirtualAllocEx", AC_INTEGRITY_CHECK, "External memory allocation, potentially executable", 4 },
+  { "VirtualQueryEx", AC_INTEGRITY_CHECK, "External memory enumeration for executable unmapped pages", 4 },
+  
   // Protection systems
   { "VirtualProtectEx", AC_PROTECTION_CHECK, "External memory protection", 3 },
   { "NtProtectVirtualMemory", AC_PROTECTION_CHECK, "Native memory protection", 3 },
@@ -74,6 +113,13 @@ const anticheat_detector_t::string_pattern_t anticheat_detector_t::string_patter
   { "ProcessHacker", AC_PROCESS_ENUM, "Process analysis tool", 4 },
   { "ProcessExplorer", AC_PROCESS_ENUM, "Process analysis tool", 4 },
   { "SeDebugPrivilege", AC_PROTECTION_CHECK, "Debug privilege check", 4 },
+  { "\\\\.\\", AC_PROTECTION_CHECK, "Device driver access (anti-cheat services)", 5 },
+  { "SOFTWARE\\CheatEngine", AC_INTEGRITY_CHECK, "Registry paths for cheat tools", 4 },
+  { "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", AC_INTEGRITY_CHECK, "Auto-start registry monitoring", 3 },
+  { "packet", AC_INTEGRITY_CHECK, "Network packet analysis", 3 },
+  { "cheat", AC_INTEGRITY_CHECK, "File names containing cheat indicators", 3 },
+  { "hack", AC_INTEGRITY_CHECK, "File names containing hack indicators", 3 },
+  { "bypass", AC_INTEGRITY_CHECK, "File names containing bypass indicators", 3 },
 };
 
 //--------------------------------------------------------------------------
@@ -108,6 +154,8 @@ int idaapi show_detector_ah_t::activate(action_activation_ctx_t *)
 //--------------------------------------------------------------------------
 anticheat_detector_t::anticheat_detector_t(plugin_ctx_t &_ctx) : ctx(_ctx)
 {
+  // Initialize energy monitoring
+  memset(&energy_usage, 0, sizeof(energy_usage));
 }
 
 //--------------------------------------------------------------------------
@@ -447,6 +495,198 @@ bool anticheat_detector_t::check_inline_detection(ea_t ea, func_t *func)
 }
 
 //--------------------------------------------------------------------------
+// New method to check for memory enumeration patterns (e.g., scanning for executable pages not mapped to files)
+bool anticheat_detector_t::check_memory_enumeration(func_t *func)
+{
+  bool found = false;
+  func_item_iterator_t fii;
+  
+  for (bool fi_ok = fii.set(func); fi_ok; fi_ok = fii.next_code())
+  {
+    xrefblk_t xb;
+    for (bool xb_ok = xb.first_from(fii.current(), XREF_FAR);
+         xb_ok && xb.iscode;
+         xb_ok = xb.next_from())
+    {
+      qstring name;
+      if (get_name(&name, xb.to) > 0)
+      {
+        // Check for VirtualQuery calls
+        if (strstr(name.c_str(), "VirtualQuery") != nullptr ||
+            strstr(name.c_str(), "VirtualQueryEx") != nullptr)
+        {
+          detected_artifact_t artifact;
+          artifact.address = fii.current();
+          artifact.category = AC_INTEGRITY_CHECK;
+          artifact.description = "Memory enumeration via VirtualQuery (potential scan for executable unmapped pages)";
+          artifact.severity = 4;
+          artifact.api_used = name;
+          artifact.instruction = name; // Store the API name as instruction
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+          
+          // Set comment to mark the artifact (only if not already marked)
+          qstring cmt;
+          get_cmt(&cmt, fii.current(), false);
+          if (strstr(cmt.c_str(), "[ACAD]") == nullptr)
+          {
+            if (!cmt.empty())
+              cmt.append(" ");
+            cmt.append("[ACAD] ");
+            cmt.append(artifact.description);
+            set_cmt(fii.current(), cmt.c_str(), false);
+          }
+        }
+      }
+    }
+  }
+  
+  return found;
+}
+
+//--------------------------------------------------------------------------
+// New method to check for VirtualProtect/VirtualAlloc making memory executable
+bool anticheat_detector_t::check_executable_memory_modification(func_t *func)
+{
+  bool found = false;
+  func_item_iterator_t fii;
+  
+  for (bool fi_ok = fii.set(func); fi_ok; fi_ok = fii.next_code())
+  {
+    xrefblk_t xb;
+    for (bool xb_ok = xb.first_from(fii.current(), XREF_FAR);
+         xb_ok && xb.iscode;
+         xb_ok = xb.next_from())
+    {
+      qstring name;
+      if (get_name(&name, xb.to) > 0)
+      {
+        // Check for VirtualProtect/VirtualAlloc calls
+        if (strstr(name.c_str(), "VirtualProtect") != nullptr ||
+            strstr(name.c_str(), "VirtualAlloc") != nullptr)
+        {
+          // In IDA, we can't easily check the arguments like in BN
+          // But we can flag the calls and let the analyst investigate
+          detected_artifact_t artifact;
+          artifact.address = fii.current();
+          artifact.category = AC_INTEGRITY_CHECK;
+          artifact.description = "Memory protection/allocation call (potential executable memory modification)";
+          artifact.severity = 4;
+          artifact.api_used = name;
+          artifact.instruction = name; // Store the API name as instruction
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+          
+          // Set comment to mark the artifact (only if not already marked)
+          qstring cmt;
+          get_cmt(&cmt, fii.current(), false);
+          if (strstr(cmt.c_str(), "[ACAD]") == nullptr)
+          {
+            if (!cmt.empty())
+              cmt.append(" ");
+            cmt.append("[ACAD] ");
+            cmt.append(artifact.description);
+            set_cmt(fii.current(), cmt.c_str(), false);
+          }
+        }
+      }
+    }
+  }
+  
+  return found;
+}
+
+//--------------------------------------------------------------------------
+// Energy monitoring methods
+void anticheat_detector_t::start_energy_monitoring()
+{
+  energy_usage.start_time = std::chrono::steady_clock::now();
+}
+
+//--------------------------------------------------------------------------
+void anticheat_detector_t::stop_energy_monitoring()
+{
+  energy_usage.end_time = std::chrono::steady_clock::now();
+  calculate_energy_usage();
+}
+
+//--------------------------------------------------------------------------
+void anticheat_detector_t::calculate_energy_usage()
+{
+  // Calculate elapsed time
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+    energy_usage.end_time - energy_usage.start_time);
+  energy_usage.cpu_time_seconds = duration.count() / 1000.0;
+  
+  // Get current RAM usage
+  energy_usage.ram_usage_mb = get_current_ram_usage();
+  
+  // Estimate energy consumption (simplified model)
+  // Assume average CPU TDP of 65W and RAM power of 5W per 8GB
+  double avg_cpu_power_w = 65.0; // Watts
+  double ram_power_w = (energy_usage.ram_usage_mb / 8192.0) * 5.0; // 5W per 8GB
+  double total_avg_power_w = avg_cpu_power_w + ram_power_w;
+  
+  // Energy in watt-hours
+  energy_usage.energy_consumed_wh = (total_avg_power_w * energy_usage.cpu_time_seconds) / 3600.0;
+  
+  // Calculate environmental impact
+  energy_usage.carbon_emitted_kg = calculate_carbon_emissions(energy_usage.energy_consumed_wh);
+  energy_usage.water_consumed_liters = calculate_water_consumption(energy_usage.energy_consumed_wh);
+  energy_usage.carbon_credit_cost_usd = calculate_carbon_credit_cost(energy_usage.carbon_emitted_kg);
+}
+
+//--------------------------------------------------------------------------
+double anticheat_detector_t::get_current_cpu_usage()
+{
+  // Simplified CPU usage - in a real implementation, you'd use PDH or similar
+  // For now, return an estimate based on processing time
+  return 50.0; // Assume 50% average CPU usage
+}
+
+//--------------------------------------------------------------------------
+double anticheat_detector_t::get_current_ram_usage()
+{
+  PROCESS_MEMORY_COUNTERS pmc;
+  if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+  {
+    return pmc.WorkingSetSize / (1024.0 * 1024.0); // Convert to MB
+  }
+  return 1024.0; // Default estimate
+}
+
+//--------------------------------------------------------------------------
+double anticheat_detector_t::calculate_carbon_emissions(double energy_wh)
+{
+  // Carbon emission factor for US grid electricity (kg CO2 per kWh)
+  // Average US grid emission factor is approximately 0.429 kg CO2/kWh
+  double emission_factor_kg_per_kwh = 0.429;
+  return (energy_wh / 1000.0) * emission_factor_kg_per_kwh;
+}
+
+//--------------------------------------------------------------------------
+double anticheat_detector_t::calculate_water_consumption(double energy_wh)
+{
+  // Water consumption for thermoelectric power generation
+  // Approximately 1.8 liters per kWh for US average
+  double water_per_kwh = 1.8;
+  return (energy_wh / 1000.0) * water_per_kwh;
+}
+
+//--------------------------------------------------------------------------
+double anticheat_detector_t::calculate_carbon_credit_cost(double carbon_kg)
+{
+  // Average carbon credit price (as of 2024) is approximately $20-30 per metric ton
+  // Using $25 per metric ton
+  double price_per_ton = 25.0;
+  return (carbon_kg / 1000.0) * price_per_ton;
+}
+
+//--------------------------------------------------------------------------
 void anticheat_detector_t::scan_function(func_t *func)
 {
   if (func == nullptr)
@@ -457,12 +697,15 @@ void anticheat_detector_t::scan_function(func_t *func)
   check_api_calls(func->start_ea, func);
   check_string_references(func->start_ea, func);
   check_inline_detection(func->start_ea, func);
+  check_memory_enumeration(func);
+  check_executable_memory_modification(func);
 }
 
 //--------------------------------------------------------------------------
 void anticheat_detector_t::scan_all_functions()
 {
   clear_results();
+  start_energy_monitoring();
   msg("Starting anti-cheat artifact scan...\n");
   
   size_t func_qty = get_func_qty();
@@ -476,7 +719,13 @@ void anticheat_detector_t::scan_all_functions()
       msg("Progress: %d/%d functions\n", i, func_qty);
   }
   
+  stop_energy_monitoring();
   msg("Scan complete! Found %d artifacts\n", artifacts.size());
+  msg("Energy Usage: %.2f Wh, Carbon: %.4f kg, Water: %.2f L, Credits: $%.2f\n",
+       energy_usage.energy_consumed_wh,
+       energy_usage.carbon_emitted_kg,
+       energy_usage.water_consumed_liters,
+       energy_usage.carbon_credit_cost_usd);
   show_results();
 }
 
@@ -484,6 +733,7 @@ void anticheat_detector_t::scan_all_functions()
 void anticheat_detector_t::scan_current_function()
 {
   clear_results();
+  start_energy_monitoring();
   
   func_t *func = get_func(get_screen_ea());
   if (func == nullptr)
@@ -494,7 +744,13 @@ void anticheat_detector_t::scan_current_function()
   
   msg("Scanning current function...\n");
   scan_function(func);
+  stop_energy_monitoring();
   msg("Found %d artifacts in current function\n", artifacts.size());
+  msg("Energy Usage: %.2f Wh, Carbon: %.4f kg, Water: %.2f L, Credits: $%.2f\n",
+       energy_usage.energy_consumed_wh,
+       energy_usage.carbon_emitted_kg,
+       energy_usage.water_consumed_liters,
+       energy_usage.carbon_credit_cost_usd);
   show_results();
 }
 
@@ -530,6 +786,16 @@ void anticheat_detector_t::export_results(const char *filename)
   qfprintf(f, "Anti-Cheat Artifact Detection Report\n");
   qfprintf(f, "=====================================\n\n");
   qfprintf(f, "Total artifacts found: %d\n\n", artifacts.size());
+  
+  // Environmental impact report
+  qfprintf(f, "Environmental Impact Report\n");
+  qfprintf(f, "===========================\n");
+  qfprintf(f, "CPU Time: %.2f seconds\n", energy_usage.cpu_time_seconds);
+  qfprintf(f, "RAM Usage: %.2f MB\n", energy_usage.ram_usage_mb);
+  qfprintf(f, "Energy Consumed: %.4f Wh\n", energy_usage.energy_consumed_wh);
+  qfprintf(f, "Carbon Emissions: %.6f kg CO2\n", energy_usage.carbon_emitted_kg);
+  qfprintf(f, "Water Consumption: %.4f liters\n", energy_usage.water_consumed_liters);
+  qfprintf(f, "Carbon Credit Cost: $%.4f\n\n", energy_usage.carbon_credit_cost_usd);
   
   for (const auto &artifact : artifacts)
   {
@@ -616,20 +882,28 @@ bool idaapi plugin_ctx_t::run(size_t arg)
   static const char form[] =
     "Anti-Cheat Artifact Detector\n"
     "\n"
-    "Select scan mode:\n"
+    "Select operation:\n"
     "\n"
     " <~S~can current function:R>\n"
     " <Scan ~a~ll functions:R>>\n"
+    " <~E~xport results:R>>\n"
     "\n";
     
-  int scan_mode = 0;
-  if (!ask_form(form, &scan_mode))
+  int operation = 0;
+  if (!ask_form(form, &operation))
     return false;
     
-  if (scan_mode == 0)
+  if (operation == 0)
     detector.scan_current_function();
-  else
+  else if (operation == 1)
     detector.scan_all_functions();
+  else if (operation == 2)
+  {
+    // Export results
+    char filename[MAXSTR] = "anticheat_report.txt";
+    if (ask_file(&filename[0], filename, "Export report to file", ".txt"))
+      detector.export_results(filename);
+  }
     
   return true;
 }

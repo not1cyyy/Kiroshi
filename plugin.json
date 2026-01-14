@@ -1,0 +1,13 @@
+{
+    "name": "Anti-Cheat Artifacts Detector",
+    "version": "1.0.0",
+    "description": "Detects anti-cheat techniques including debugger checks, VM detection, and other anti-analysis methods",
+    "license": {
+        "name": "MIT"
+    },
+    "author": "not1cyyy",
+    "minimumBinaryNinjaVersion": "4000",
+    "apiDependencies": [],
+    "platforms": ["Windows", "Linux", "macOS"],
+    "architectures": ["x86", "x86_64", "arm64"]
+}

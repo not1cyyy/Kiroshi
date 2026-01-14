@@ -17,6 +17,22 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <chrono>
+#include <Windows.h>
+#include <psapi.h>
+
+// Energy monitoring structure
+struct energy_usage_t
+{
+  double cpu_time_seconds;
+  double ram_usage_mb;
+  double energy_consumed_wh;
+  double carbon_emitted_kg;
+  double water_consumed_liters;
+  double carbon_credit_cost_usd;
+  std::chrono::steady_clock::time_point start_time;
+  std::chrono::steady_clock::time_point end_time;
+};
 
 #define ACTION_NAME "anticheat:DetectArtifacts"
 #define ACTION_LABEL "Anti-Cheat Artifacts Detector"
@@ -92,7 +108,19 @@ private:
   bool check_api_calls(ea_t ea, func_t *func);
   bool check_string_references(ea_t ea, func_t *func);
   bool check_inline_detection(ea_t ea, func_t *func);
+  bool check_memory_enumeration(func_t *func);
+  bool check_executable_memory_modification(func_t *func);
   bool is_suspicious_constant(uint64 val);
+  
+  // Energy monitoring methods
+  void start_energy_monitoring();
+  void stop_energy_monitoring();
+  void calculate_energy_usage();
+  double get_current_cpu_usage();
+  double get_current_ram_usage();
+  double calculate_carbon_emissions(double energy_wh);
+  double calculate_water_consumption(double energy_wh);
+  double calculate_carbon_credit_cost(double carbon_kg);
   
 public:
   anticheat_detector_t(plugin_ctx_t &_ctx);
@@ -107,6 +135,9 @@ public:
   
   void show_results();
   void export_results(const char *filename);
+  
+  // Energy monitoring data
+  energy_usage_t energy_usage;
 };
 
 //--------------------------------------------------------------------------
