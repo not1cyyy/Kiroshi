@@ -55,6 +55,54 @@ const anticheat_detector_t::api_pattern_t anticheat_detector_t::api_patterns[] =
   // Protection systems
   { "VirtualProtectEx", AC_PROTECTION_CHECK, "External memory protection", 3 },
   { "NtProtectVirtualMemory", AC_PROTECTION_CHECK, "Native memory protection", 3 },
+  
+  // Window/UI enumeration
+  { "FindWindowA", AC_PROCESS_ENUM, "Find window by name", 2 },
+  { "FindWindowW", AC_PROCESS_ENUM, "Find window by name", 2 },
+  { "EnumWindows", AC_PROCESS_ENUM, "Enumerate windows", 3 },
+  { "GetWindowTextA", AC_PROCESS_ENUM, "Get window title (debugger detection)", 2 },
+  { "GetWindowTextW", AC_PROCESS_ENUM, "Get window title (debugger detection)", 2 },
+  
+  // File/Registry operations
+  { "RegOpenKeyExA", AC_INTEGRITY_CHECK, "Registry access for artifact detection", 2 },
+  { "RegOpenKeyExW", AC_INTEGRITY_CHECK, "Registry access for artifact detection", 2 },
+  { "RegQueryValueExA", AC_INTEGRITY_CHECK, "Registry query for VM/driver detection", 2 },
+  { "RegQueryValueExW", AC_INTEGRITY_CHECK, "Registry query for VM/driver detection", 2 },
+  { "CreateFileA", AC_INTEGRITY_CHECK, "File access (may check for debugger files)", 2 },
+  { "CreateFileW", AC_INTEGRITY_CHECK, "File access (may check for debugger files)", 2 },
+  
+  // Exception handling anti-debug
+  { "SetUnhandledExceptionFilter", AC_DEBUGGER_DETECT, "Exception filter for anti-debug", 4 },
+  { "AddVectoredExceptionHandler", AC_DEBUGGER_DETECT, "Vectored exception handler (anti-debug)", 4 },
+  { "SetErrorMode", AC_DEBUGGER_DETECT, "Error mode manipulation", 3 },
+  
+  // Driver/Kernel operations
+  { "CreateFileA", AC_PROTECTION_CHECK, "Device handle creation", 3 },
+  { "DeviceIoControl", AC_PROTECTION_CHECK, "Direct device I/O", 4 },
+  { "NtDeviceIoControlFile", AC_PROTECTION_CHECK, "Native device I/O", 4 },
+  
+  // Direct kernel calls
+  { "NtSetInformationFile", AC_PROTECTION_CHECK, "File information manipulation", 3 },
+  { "NtQueryDirectoryFile", AC_PROCESS_ENUM, "Directory enumeration", 2 },
+  { "NtOpenProcess", AC_PROCESS_ENUM, "Open process handle", 3 },
+  { "NtQueryObject", AC_PROCESS_ENUM, "Query object information", 3 },
+  
+  // Memory forensics detection
+  { "GetProcessMemoryInfo", AC_INTEGRITY_CHECK, "Memory information retrieval", 3 },
+  { "GlobalMemoryStatusEx", AC_INTEGRITY_CHECK, "Global memory status check", 2 },
+  { "HeapWalk", AC_INTEGRITY_CHECK, "Heap enumeration", 3 },
+  { "HeapAlloc", AC_INTEGRITY_CHECK, "Memory allocation (pattern check)", 2 },
+  
+  // Thread manipulation
+  { "CreateRemoteThread", AC_THREAD_CONTEXT, "Remote thread creation", 4 },
+  { "NtCreateThreadEx", AC_THREAD_CONTEXT, "Native thread creation", 4 },
+  { "SuspendThread", AC_THREAD_CONTEXT, "Thread suspension", 3 },
+  { "ResumeThread", AC_THREAD_CONTEXT, "Thread resumption", 3 },
+  
+  // Network communication (potential C2 or beacon)
+  { "WSASocket", AC_INTEGRITY_CHECK, "Winsock initialization", 2 },
+  { "WinHttpOpen", AC_INTEGRITY_CHECK, "HTTP connection setup", 2 },
+  { "InternetOpenA", AC_INTEGRITY_CHECK, "Internet connection", 2 },
 };
 
 //--------------------------------------------------------------------------
@@ -74,6 +122,36 @@ const anticheat_detector_t::string_pattern_t anticheat_detector_t::string_patter
   { "ProcessHacker", AC_PROCESS_ENUM, "Process analysis tool", 4 },
   { "ProcessExplorer", AC_PROCESS_ENUM, "Process analysis tool", 4 },
   { "SeDebugPrivilege", AC_PROTECTION_CHECK, "Debug privilege check", 4 },
+  
+  // Additional debugger/analysis tool detection
+  { "WinDbg", AC_DEBUGGER_DETECT, "WinDbg debugger detection", 5 },
+  { "GDB", AC_DEBUGGER_DETECT, "GNU Debugger detection", 5 },
+  { "LLDB", AC_DEBUGGER_DETECT, "LLDB debugger detection", 5 },
+  { "Radare2", AC_DEBUGGER_DETECT, "Radare2 analysis tool detection", 5 },
+  { "Ghidra", AC_DEBUGGER_DETECT, "Ghidra reverse engineering tool", 5 },
+  { "BinDiff", AC_DEBUGGER_DETECT, "Hex-Rays BinDiff detection", 4 },
+  { "Frida", AC_DEBUGGER_DETECT, "Frida dynamic instrumentation detection", 5 },
+  { "DynamoRIO", AC_DEBUGGER_DETECT, "DynamoRIO dynamic instrumentation", 5 },
+  { "Pin", AC_DEBUGGER_DETECT, "Intel Pin instrumentation detection", 5 },
+  { "Valgrind", AC_DEBUGGER_DETECT, "Valgrind profiler detection", 4 },
+  
+  // Hypervisor/Virtualization detection
+  { "HyperV", AC_VM_DETECT, "Hyper-V detection", 4 },
+  { "KVM", AC_VM_DETECT, "KVM hypervisor detection", 4 },
+  { "Bochs", AC_VM_DETECT, "Bochs emulator detection", 4 },
+  { "Parallels", AC_VM_DETECT, "Parallels Desktop detection", 4 },
+  { "VirtualPC", AC_VM_DETECT, "Virtual PC detection", 4 },
+  
+  // Disassembler detection
+  { "Disasm", AC_DEBUGGER_DETECT, "Disassembler detection", 3 },
+  { "Hexdump", AC_DEBUGGER_DETECT, "Hex dump analysis detection", 2 },
+  { "Strings", AC_DEBUGGER_DETECT, "String analysis tool detection", 2 },
+  
+  // Security software detection
+  { "ESET", AC_INTEGRITY_CHECK, "ESET antivirus detection", 3 },
+  { "Norton", AC_INTEGRITY_CHECK, "Norton antivirus detection", 3 },
+  { "McAfee", AC_INTEGRITY_CHECK, "McAfee antivirus detection", 3 },
+  { "Kaspersky", AC_INTEGRITY_CHECK, "Kaspersky antivirus detection", 3 },
 };
 
 //--------------------------------------------------------------------------
@@ -275,6 +353,78 @@ bool anticheat_detector_t::check_string_references(ea_t ea, func_t *func)
 }
 
 //--------------------------------------------------------------------------
+// Helper function for detecting anti-analysis patterns in function prologue
+bool anticheat_detector_t::detect_anti_analysis_prologue(ea_t func_ea, func_t *func)
+{
+  bool found = false;
+  func_item_iterator_t fii;
+  
+  // Check first few instructions of function for anti-analysis patterns
+  int check_count = 0;
+  for (bool fi_ok = fii.set(func); fi_ok && check_count < 10; fi_ok = fii.next_code(), check_count++)
+  {
+    ea_t current = fii.current();
+    
+    if (is_code(get_flags(current)))
+    {
+      insn_t insn;
+      if (decode_insn(&insn, current) > 0)
+      {
+        // Check for direct stack manipulation that could be anti-debug
+        if (insn.itype == NN_push || insn.itype == NN_pop)
+        {
+          // Look for push/pop of segment registers (common anti-debug)
+          if (insn.ops[0].type == o_reg && 
+              (insn.ops[0].reg == R_GS || insn.ops[0].reg == R_FS || insn.ops[0].reg == R_SS))
+          {
+            detected_artifact_t artifact;
+            artifact.address = current;
+            artifact.category = AC_DEBUGGER_DETECT;
+            artifact.description = "Segment register manipulation (potential anti-debug)";
+            artifact.severity = 4;
+            artifact.instruction = "Segment register push/pop";
+            get_func_name(&artifact.function_name, func->start_ea);
+            
+            artifacts.push_back(artifact);
+            found = true;
+          }
+        }
+        
+        // Check for CMP with suspicious register patterns
+        if (insn.itype == NN_cmp)
+        {
+          // Comparing with specific debugging-related registers/values
+          for (int i = 0; i < UA_MAXOP; i++)
+          {
+            if (insn.ops[i].type == o_imm)
+            {
+              // Common constants for anti-debug comparisons
+              uint64 val = insn.ops[i].value;
+              if (val == 0x00000000 || val == 0xFFFFFFFF || val == 0x40000000 || 
+                  val == 0x80000000 || val == 0x7FFFFFFF)
+              {
+                detected_artifact_t artifact;
+                artifact.address = current;
+                artifact.category = AC_DEBUGGER_DETECT;
+                artifact.description.sprnt("Constant comparison: 0x%llX (potential anti-debug)", val);
+                artifact.severity = 3;
+                artifact.instruction.sprnt("cmp with 0x%llX", val);
+                get_func_name(&artifact.function_name, func->start_ea);
+                
+                artifacts.push_back(artifact);
+                found = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  return found;
+}
+
+//--------------------------------------------------------------------------
 bool anticheat_detector_t::check_inline_detection(ea_t ea, func_t *func)
 {
   bool found = false;
@@ -439,9 +589,118 @@ bool anticheat_detector_t::check_inline_detection(ea_t ea, func_t *func)
             }
           }
         }
+        
+        // XLATB instruction (sometimes used in code obfuscation)
+        if (mnem == "xlatb")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_INTEGRITY_CHECK;
+          artifact.description = "XLATB instruction (potential code obfuscation)";
+          artifact.severity = 2;
+          artifact.instruction = "xlatb";
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // LAHF/SAHF pair (can be used for anti-analysis)
+        if (mnem == "lahf" || mnem == "sahf")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_DEBUGGER_DETECT;
+          artifact.description.sprnt("%s instruction (flag manipulation)", mnem.c_str());
+          artifact.severity = 2;
+          artifact.instruction = mnem;
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // SysEnter/SysExit (direct syscall)
+        if (mnem == "sysenter" || mnem == "sysexit")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_PROTECTION_CHECK;
+          artifact.description.sprnt("%s instruction (direct kernel call)", mnem.c_str());
+          artifact.severity = 4;
+          artifact.instruction = mnem;
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // PREFETCH instructions (can indicate timing side-channel attacks)
+        if (strstr(mnem.c_str(), "prefetch") != nullptr)
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_TIMING_CHECK;
+          artifact.description = "PREFETCH instruction (cache timing attack indicator)";
+          artifact.severity = 2;
+          artifact.instruction = mnem;
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // CLFLUSH instruction (cache flushing for timing attacks)
+        if (mnem == "clflush" || mnem == "clflushopt")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_TIMING_CHECK;
+          artifact.description = "CLFLUSH instruction (cache flushing - timing attack)";
+          artifact.severity = 3;
+          artifact.instruction = mnem;
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // LFENCE/SFENCE/MFENCE (memory barriers - often used in anti-timing-attack)
+        if (mnem == "lfence" || mnem == "sfence" || mnem == "mfence")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_TIMING_CHECK;
+          artifact.description.sprnt("%s instruction (memory fence - constant-time execution)", mnem.c_str());
+          artifact.severity = 2;
+          artifact.instruction = mnem;
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
+        
+        // PAUSE instruction (timing adjustment)
+        if (mnem == "pause")
+        {
+          detected_artifact_t artifact;
+          artifact.address = current;
+          artifact.category = AC_TIMING_CHECK;
+          artifact.description = "PAUSE instruction (timing adjustment)";
+          artifact.severity = 2;
+          artifact.instruction = "pause";
+          get_func_name(&artifact.function_name, func->start_ea);
+          
+          artifacts.push_back(artifact);
+          found = true;
+        }
       }
     }
   }
+  
+  // Call the new prologue detector
+  if (detect_anti_analysis_prologue(ea, func))
+    found = true;
   
   return found;
 }
