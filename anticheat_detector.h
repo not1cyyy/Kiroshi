@@ -92,6 +92,7 @@ private:
   bool check_api_calls(ea_t ea, func_t *func);
   bool check_string_references(ea_t ea, func_t *func);
   bool check_inline_detection(ea_t ea, func_t *func);
+  bool detect_anti_analysis_prologue(ea_t func_ea, func_t *func);
   bool is_suspicious_constant(uint64 val);
   
 public:
